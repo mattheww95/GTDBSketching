@@ -134,12 +134,13 @@ def main():
     parser.add_argument("-n", "--sketch-name", help="The name you would like for the final sketch (ending in '.msh')")
     parser.add_argument("-k", "--kmer-size", help="Kmer size, an integer between 3 and 31, default: 21", type=int, default=21)
     parser.add_argument("-s", "--sketch-size", help="sketch size, an integer greater than 10: default 1000", type=int, default=1000)
-    parser.parse_args()
-
+    args = parser.parse_args()
+    SketchData(database=args.database, taxonomy=args.taxonomy, kmer_size=args.kmer_size, sketch_size=args.sketch_size)
+    BigPaste(args.database, args.sketch_name)
 
 if __name__=="__main__":
     taxonomy = "../GTDB_data/data.gtdb.ecogenomic.org/releases/latest/bac120_taxonomy.tsv"
     database = "../GTDB_data/data.gtdb.ecogenomic.org/releases/latest/genomic_files_reps/gtdb_genomes_reps_r214/database/GCF/"
     #SketchData(database=database, taxonomy=taxonomy)
-    #main()
-    BigPaste(database, "GTDB_out_20230911.msh")
+    main()
+    #BigPaste(database, "GTDB_out_20230911.msh")

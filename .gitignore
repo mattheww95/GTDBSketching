@@ -1,0 +1,4 @@
+scripts/*.txt
+scripts/*.msh
+*.msh
+*.txt

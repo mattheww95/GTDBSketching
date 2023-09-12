@@ -26,7 +26,7 @@ class BacterialTaxonomy:
             file_path (_type_): _description_
         """
         sys.stderr.write("Reading in taxonomy file.\n")
-        strip_prefix = lambda x: x[x.index("_")+1:]
+        def strip_prefix(x): return x[x.index("_")+1:]
         with open(file_path, 'r', encoding="utf8") as taxa:
             for i in taxa:
                 values = i.strip().split("\t")
@@ -52,7 +52,7 @@ class IndexFiles:
         """
         sys.stderr.write(f"Indexing files ending with {self.suffix_expr}.\n")
         entries = [*os.scandir(path)]
-        clean_name = lambda x: x[:x.rindex("_")]
+        def clean_name(x): return x[:x.rindex("_")]
         try:
             while entry := entries.pop():
                 if entry.is_dir(follow_symlinks=False):
@@ -78,6 +78,8 @@ class SketchData:
             sys.stderr.write("warning low kmer size, must be a float between 0 and 1\n")
             sys.exit()
 
+        self.key_errors = 0
+        self.max_forks = 10
         #self.amino_acid_alph = "-a" if amino_acid_alph else ""
         self.prob_low_kmer = str(prob_low_kmer)
         self.sketch_size = str(sketch_size)
@@ -86,29 +88,64 @@ class SketchData:
         self.database = IndexFiles(database)
         self.create_commands()
 
+    def prepare_mash_calls(self, identity, path, err_log):
+        """Prepare individual mash calls
+
+        Args:
+            identity (_type_): _description_
+            path (_type_): _description_
+        """
+        proc = True # default to true to allow for iteration of the call pool
+        try:
+            comment = self.taxonomy.data[identity]
+        except KeyError:
+            self.key_errors +=1
+            err_log.write(f"The assembly {identity} does not have any \
+                        taxonomic information attached to it.\n")
+        else:
+            proc = self.call_mash_sketch(identity, comment, path, err_log)
+        return proc
+
+
+    def call_mash_sketch(self, identity, comment, file_path, err_log):
+        """Call mash subprocess
+
+        Args:
+            identity (_type_): _description_
+            comment (_type_): _description_
+            file_path (_type_): _description_
+            err_log (_type_): _description_
+        """
+        proc = subprocess.Popen(["mash", "sketch", "-I", identity, "-C",
+                        f'"{comment}"', "-k", self.kmer_size, 
+                        "-s", self.sketch_size, 
+                        "-w", self.prob_low_kmer, file_path], 
+                        stdout=err_log, stderr=err_log)
+        return proc
+
     def create_commands(self):
         """Create mash commands from merged data
         """
-        key_errors = 0
+
         sys.stderr.write("Creating mash sketches.\n")
         file_idx_len = len(self.database.file_index)
+        p_bar = tqdm(total=len(self.database.file_index))
+        call_pool = []
         with open("error_log.txt", 'w', encoding="utf8") as errors:
-            for key, value in tqdm(self.database.file_index.items()):
-                try:
-                    comment = self.taxonomy.data[key]
-                except KeyError:
-                    key_errors +=1
-                    errors.write(f"The assembly {key} does not have any \
-                                taxonomic information attached to it.\n")
+            for key, value in self.database.file_index.items():
+                if len(call_pool) < self.max_forks:
+                    call_pool.append(self.prepare_mash_calls(key, value, errors))
                 else:
-                    proc = subprocess.Popen(["mash", "sketch", "-I", key, "-C",
-                                            f'"{comment}"', "-k", self.kmer_size, 
-                                            "-s", self.sketch_size, 
-                                            "-w", self.prob_low_kmer, value], 
-                                            stdout=errors, stderr=errors) 
-                    proc.wait()
-        print(f"Entry Errors: {key_errors}")
-        print(f"This corresponds to {round(key_errors/float(file_idx_len)*100, 2)}% \
+                    try:
+                        while call := call_pool.pop():
+                            if isinstance(call, subprocess.Popen):
+                                call.wait()
+                            p_bar.update(1)
+                    except IndexError:
+                        pass
+        p_bar.close()
+        print(f"Entry Errors: {self.key_errors}")
+        print(f"This corresponds to {round(self.key_errors/float(file_idx_len)*100, 2)}% \
             of assemblies missing taxomonomic data and have been excluded from the sketch.")
         print("Please check the error log for assemblies missing taxonomic data.")
 
@@ -134,7 +171,7 @@ class BigPaste:
 
 
     def create_file_list(self, files_obj):
-        """Creat file of file names
+        """Create file of file names
 
         Args:
             files_obj (_type_): _description_
@@ -149,13 +186,15 @@ def main():
                                     description="Generate a mash sketch with a \
                                         Kraken2 like taxonomy comment from a GTDB download.")
 
-    parser.add_argument("-t", "--taxonomy", 
+    parser.add_argument("-t", "--taxonomy",
+                        required=True,
                         help="A file in the GTDB download containing the \
                             taxonomy strings for the various assemblies. It will be called \
                         something along the lines of bac120_taxonomy.tsv. \
                             The assembly ID will be prefaced by either RS_ or GB_")
 
     parser.add_argument("-d", "--database",
+                        required=True,
                         help="Directory containing the assembled zipped genomes (ending in .fna.gz). \
                         Specify the database to the directory you wish to use to generate your sketch.\
                         A path to the database could like \
@@ -163,6 +202,7 @@ def main():
                         to create a sketch of the refseq genomes")
 
     parser.add_argument("-n", "--sketch-name",
+                        required=True,
                         help="The name you would like for the final sketch (ending in '.msh')")
 
     parser.add_argument("-k", "--kmer-size",

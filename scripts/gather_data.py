@@ -26,7 +26,11 @@ class BacterialTaxonomy:
             file_path (_type_): _description_
         """
         sys.stderr.write("Reading in taxonomy file.\n")
-        def strip_prefix(x): return x[x.index("_")+1:]
+        def strip_prefix(x):
+            if "_" in x: 
+                return x[x.index("_")+1:]
+            return x
+        
         with open(file_path, 'r', encoding="utf8") as taxa:
             for i in taxa:
                 values = i.strip().split("\t")
@@ -52,7 +56,11 @@ class IndexFiles:
         """
         sys.stderr.write(f"Indexing files ending with {self.suffix_expr}.\n")
         entries = [*os.scandir(path)]
-        def clean_name(x): return x[:x.rindex("_")]
+        def clean_name(x): 
+                if "_" in x:
+                    return x[:x.rindex("_")]
+                return x.strip(self.suffix_expr)
+
         try:
             while entry := entries.pop():
                 if entry.is_dir(follow_symlinks=False):
@@ -67,7 +75,7 @@ class IndexFiles:
 class SketchData:
 
     def __init__(self, database, taxonomy, kmer_size=21, sketch_size=1000, 
-                prob_low_kmer=0.01) -> None:
+                prob_low_kmer=0.01, sketch_suffix=".fna.gz") -> None:
         if kmer_size > 31 or kmer_size < 1:
             sys.stderr.write("Inaccurate kmer sizes must be between 1-32.\n")
             sys.exit()
@@ -78,6 +86,7 @@ class SketchData:
             sys.stderr.write("warning low kmer size, must be a float between 0 and 1\n")
             sys.exit()
 
+        self.sketch_suffix = sketch_suffix
         self.key_errors = 0
         self.max_forks = 10
         #self.amino_acid_alph = "-a" if amino_acid_alph else ""
@@ -85,7 +94,7 @@ class SketchData:
         self.sketch_size = str(sketch_size)
         self.kmer_size = str(kmer_size)
         self.taxonomy = BacterialTaxonomy(taxonomy)
-        self.database = IndexFiles(database)
+        self.database = IndexFiles(database, self.sketch_suffix)
         self.create_commands()
 
     def prepare_mash_calls(self, identity, path, err_log):
@@ -101,7 +110,7 @@ class SketchData:
         except KeyError:
             self.key_errors +=1
             err_log.write(f"The assembly {identity} does not have any \
-                        taxonomic information attached to it.\n")
+taxonomic information attached to it.\n")
         else:
             proc = self.call_mash_sketch(identity, comment, path, err_log)
         return proc
@@ -131,6 +140,7 @@ class SketchData:
         file_idx_len = len(self.database.file_index)
         p_bar = tqdm(total=len(self.database.file_index))
         call_pool = []
+        # TODO this scheduling is in-efficient :(
         with open("error_log.txt", 'w', encoding="utf8") as errors:
             for key, value in self.database.file_index.items():
                 if len(call_pool) < self.max_forks:
@@ -146,7 +156,7 @@ class SketchData:
         p_bar.close()
         print(f"Entry Errors: {self.key_errors}")
         print(f"This corresponds to {round(self.key_errors/float(file_idx_len)*100, 2)}% \
-            of assemblies missing taxomonomic data and have been excluded from the sketch.")
+              of assemblies missing taxomonomic data and have been excluded from the sketch.")
         print("Please check the error log for assemblies missing taxonomic data.")
 
 
@@ -155,9 +165,9 @@ class BigPaste:
     """
 
     __fofn_name = "SketchedAssemblies.txt"
-    def __init__(self, fp, sketch_name) -> None:
+    def __init__(self, fp, sketch_name, suffix) -> None:
         self.file_path = fp
-        self.sketches = IndexFiles(self.file_path, ".fna.gz.msh")
+        self.sketches = IndexFiles(self.file_path, f"{suffix}.msh")
         self.sketch_name = sketch_name
         self.create_file_list(self.sketches)
         self.mega_paste()
@@ -213,9 +223,11 @@ def main():
                         help="sketch size, an integer greater than 10: default 1000",
                         type=int, default=1000)
     
+    parser.add_argument("-e", "--suffix", help="File ending suffix, default: .fna.gz", default=".fna.gz")
+    
     args = parser.parse_args()
-    SketchData(database=args.database, taxonomy=args.taxonomy, kmer_size=args.kmer_size, sketch_size=args.sketch_size)
-    BigPaste(args.database, args.sketch_name)
+    SketchData(database=args.database, taxonomy=args.taxonomy, kmer_size=args.kmer_size, sketch_size=args.sketch_size, sketch_suffix=args.suffix)
+    BigPaste(args.database, args.sketch_name, args.suffix)
 
 if __name__=="__main__":
     #taxonomy = "../GTDB_data/data.gtdb.ecogenomic.org/releases/latest/bac120_taxonomy.tsv"
